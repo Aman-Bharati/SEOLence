@@ -21,6 +21,8 @@ describe("AuthModal - Login and Signup Automation Tests", () => {
   });
 
   it("should not render when isOpen is false", () => {
+    // INTENTIONAL FAILURE FOR CI TESTING:
+    expect("Actual Title").toBe("Intentionally Failing Test Title - Testing CI Error Detection");
     const { container } = render(<AuthModal isOpen={false} onClose={mockOnClose} />);
     expect(container.firstChild).toBeNull();
   });
