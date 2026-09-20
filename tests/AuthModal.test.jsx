@@ -1,10 +1,10 @@
 // Automated test suite for Login & Signup modal (JavaScript / JSX)
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { AuthModal } from "../AuthModal";
-import { supabase } from "../../lib/supabase";
+import { AuthModal } from "../src/components/AuthModal";
+import { supabase } from "../src/lib/supabase";
 
-vi.mock("../../lib/supabase", () => ({
+vi.mock("../src/lib/supabase", () => ({
   supabase: {
     auth: {
       signInWithPassword: vi.fn(),
