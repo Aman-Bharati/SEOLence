@@ -1,4 +1,4 @@
-// Automated test suite for Login & Signup modal
+// Automated test suite for Login & Signup modal (JavaScript / JSX)
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthModal } from "../AuthModal";
@@ -13,7 +13,7 @@ vi.mock("../../lib/supabase", () => ({
   },
 }));
 
-describe("AuthModal - Login and Signup Automation Tests", () => {
+describe("AuthModal - Login and Signup Automation Tests (JS)", () => {
   const mockOnClose = vi.fn();
 
   beforeEach(() => {
@@ -21,8 +21,9 @@ describe("AuthModal - Login and Signup Automation Tests", () => {
   });
 
   it("should not render when isOpen is false", () => {
-    // INTENTIONAL FAILURE FOR CI TESTING:
-    expect("Actual Title").toBe("Intentionally Failing Test Title - Testing CI Error Detection");
+    // UNCOMMENT THE LINE BELOW TO TEST A FAILING BUILD ON GITHUB ACTIONS INTENTIONALLY:
+    // expect("Actual Title").toBe("Failing Title - Intentionally testing CI failure");
+
     const { container } = render(<AuthModal isOpen={false} onClose={mockOnClose} />);
     expect(container.firstChild).toBeNull();
   });
@@ -72,10 +73,10 @@ describe("AuthModal - Login and Signup Automation Tests", () => {
   });
 
   it("should trigger successful Sign In and close modal", async () => {
-    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValueOnce({
+    supabase.auth.signInWithPassword.mockResolvedValueOnce({
       data: { user: { id: "123" }, session: {} },
       error: null,
-    } as unknown as Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>);
+    });
 
     render(<AuthModal isOpen={true} onClose={mockOnClose} />);
 
@@ -98,10 +99,10 @@ describe("AuthModal - Login and Signup Automation Tests", () => {
   });
 
   it("should trigger successful Sign Up and show verification message", async () => {
-    vi.mocked(supabase.auth.signUp).mockResolvedValueOnce({
+    supabase.auth.signUp.mockResolvedValueOnce({
       data: { user: { id: "456" }, session: null },
       error: null,
-    } as unknown as Awaited<ReturnType<typeof supabase.auth.signUp>>);
+    });
 
     render(<AuthModal isOpen={true} onClose={mockOnClose} />);
 
@@ -127,10 +128,10 @@ describe("AuthModal - Login and Signup Automation Tests", () => {
   });
 
   it("should display error message on authentication failure", async () => {
-    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValueOnce({
+    supabase.auth.signInWithPassword.mockResolvedValueOnce({
       data: { user: null, session: null },
       error: { message: "Invalid login credentials", name: "AuthApiError", status: 400 },
-    } as unknown as Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>);
+    });
 
     render(<AuthModal isOpen={true} onClose={mockOnClose} />);
 
