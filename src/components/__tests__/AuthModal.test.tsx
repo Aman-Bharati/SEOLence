@@ -1,3 +1,4 @@
+// Automated test suite for Login & Signup modal
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AuthModal } from "../AuthModal";
