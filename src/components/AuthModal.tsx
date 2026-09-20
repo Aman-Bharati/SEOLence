@@ -57,7 +57,15 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         onClose();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Authentication failed. Please try again.";
+      let msg =
+        typeof err === "object" && err !== null && "message" in err && typeof (err as { message: unknown }).message === "string"
+          ? (err as { message: string }).message
+          : err instanceof Error
+          ? err.message
+          : "Authentication failed. Please try again.";
+      if (msg.includes("Failed to fetch") || msg.includes("fetch")) {
+        msg = "Failed to connect to Supabase backend. Please verify your internet connection, check if your Supabase project is active, or restart the dev server if you recently updated .env.";
+      }
       setError(msg);
     } finally {
       setLoading(false);
@@ -65,7 +73,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-950/80 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-950/80 backdrop-blur-sm animate-fade-in no-print">
       <div className="relative w-full max-w-md bg-ink-850/95 glass border border-ink-700/60 rounded-2xl p-6 md:p-8 shadow-2xl animate-scale-up">
         {/* Close Button */}
         <button

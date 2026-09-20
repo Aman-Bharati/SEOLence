@@ -9,6 +9,10 @@ interface KeywordRecommendationsProps {
 export function KeywordRecommendations({ result }: KeywordRecommendationsProps) {
   const [copied, setCopied] = useState<string | null>(null);
 
+  const overused = result?.overusedWords || [];
+  const recommended = result?.recommendedKeywords || [];
+  const top = result?.topKeywords || [];
+
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(text);
@@ -24,13 +28,13 @@ export function KeywordRecommendations({ result }: KeywordRecommendationsProps) 
           <h3 className="font-display font-semibold text-slate-100">Overused Words</h3>
         </div>
         <p className="text-xs text-slate-500 mb-3">High density may signal keyword stuffing (&gt;4%)</p>
-        {result.overusedWords.length === 0 ? (
+        {overused.length === 0 ? (
           <div className="text-sm text-emerald-400 py-6 text-center bg-emerald-500/5 rounded-lg border border-emerald-500/15">
             No overused words detected
           </div>
         ) : (
           <div className="space-y-2">
-            {result.overusedWords.slice(0, 8).map((word) => (
+            {overused.slice(0, 8).map((word) => (
               <div key={word.word} className="flex items-center justify-between bg-ink-800/50 rounded-lg px-3 py-2">
                 <span className="font-mono text-sm text-slate-200">{word.word}</span>
                 <div className="flex items-center gap-2">
@@ -51,7 +55,7 @@ export function KeywordRecommendations({ result }: KeywordRecommendationsProps) 
         </div>
         <p className="text-xs text-slate-500 mb-3">Suggested targets based on your content & niche</p>
         <div className="flex flex-wrap gap-2">
-          {result.recommendedKeywords.map((kw) => (
+          {recommended.map((kw) => (
             <button
               key={kw}
               onClick={() => handleCopy(kw)}
@@ -75,7 +79,7 @@ export function KeywordRecommendations({ result }: KeywordRecommendationsProps) 
         </div>
         <p className="text-xs text-slate-500 mb-3">High-relevance content words by frequency</p>
         <div className="space-y-2">
-          {result.topKeywords.slice(0, 8).map((kw, i) => (
+          {top.slice(0, 8).map((kw, i) => (
             <div key={kw.word} className="flex items-center gap-3">
               <span className="text-xs font-mono text-slate-600 w-4">{i + 1}</span>
               <span className="font-mono text-sm text-slate-200 flex-1 capitalize">{kw.word}</span>
@@ -83,7 +87,7 @@ export function KeywordRecommendations({ result }: KeywordRecommendationsProps) 
               <div className="w-16 h-1.5 bg-ink-800 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 rounded-full transition-all duration-700"
-                  style={{ width: `${(kw.count / result.topKeywords[0].count) * 100}%` }}
+                  style={{ width: `${(kw.count / (top[0]?.count || 1)) * 100}%` }}
                 />
               </div>
             </div>

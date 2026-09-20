@@ -7,6 +7,7 @@ interface SerpPreviewProps {
 }
 
 function getDomain(url: string): string {
+  if (!url) return "";
   try {
     const u = new URL(url);
     return u.hostname.replace(/^www\./, "") + u.pathname.replace(/\/$/, "");
@@ -23,7 +24,7 @@ export function SerpPreview({ result }: SerpPreviewProps) {
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [useSuggested, setUseSuggested] = useState(false);
 
-  const url = getDomain(result.parsed.finalUrl);
+  const url = getDomain(result.parsed.finalUrl) || "website.com";
   const titleColor = title.length > 60 ? "text-rose-400" : "text-cyan-400";
 
   const maxWidth = device === "mobile" ? "max-w-[320px]" : "max-w-[600px]";

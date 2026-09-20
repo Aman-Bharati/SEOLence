@@ -7,12 +7,14 @@ interface StructurePanelProps {
 
 export function StructurePanel({ result }: StructurePanelProps) {
   const { parsed } = result;
-  const h1s = parsed.headings.filter((h) => h.level === 1);
-  const h2s = parsed.headings.filter((h) => h.level === 2);
-  const h3s = parsed.headings.filter((h) => h.level === 3);
-  const h4plus = parsed.headings.filter((h) => h.level >= 4);
+  const headings = parsed?.headings || [];
+  const images = parsed?.images || [];
+  const h1s = headings.filter((h) => h?.level === 1);
+  const h2s = headings.filter((h) => h?.level === 2);
+  const h3s = headings.filter((h) => h?.level === 3);
+  const h4plus = headings.filter((h) => h?.level >= 4);
 
-  const imagesMissingAlt = parsed.images.filter((i) => !i.hasAlt || i.alt.length === 0);
+  const imagesMissingAlt = images.filter((i) => !i?.hasAlt || (i?.alt || "").length === 0);
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -20,7 +22,7 @@ export function StructurePanel({ result }: StructurePanelProps) {
       <div className="bg-ink-850/60 glass border border-ink-700 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display font-semibold text-slate-100">Heading Structure</h3>
-          <span className="text-xs text-slate-500 font-mono">{parsed.headings.length} total</span>
+          <span className="text-xs text-slate-500 font-mono">{headings.length} total</span>
         </div>
 
         <div className="grid grid-cols-4 gap-2 mb-4">
@@ -47,10 +49,10 @@ export function StructurePanel({ result }: StructurePanelProps) {
         </div>
 
         <div className="space-y-1.5 max-h-64 overflow-y-auto">
-          {parsed.headings.length === 0 ? (
+          {headings.length === 0 ? (
             <p className="text-sm text-slate-500 text-center py-6">No headings found on this page.</p>
           ) : (
-            parsed.headings.map((heading, i) => (
+            headings.map((heading, i) => (
               <div
                 key={i}
                 className="flex items-start gap-2 animate-fade-in"
@@ -86,17 +88,17 @@ export function StructurePanel({ result }: StructurePanelProps) {
             <ImageIcon className="w-4 h-4 text-cyan-400" />
             <h3 className="font-display font-semibold text-slate-100">Image Analysis</h3>
           </div>
-          <span className="text-xs text-slate-500 font-mono">{parsed.images.length} images</span>
+          <span className="text-xs text-slate-500 font-mono">{images.length} images</span>
         </div>
 
-        {parsed.images.length === 0 ? (
+        {images.length === 0 ? (
           <p className="text-sm text-slate-500 text-center py-6">No images found on this page.</p>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-lg p-3">
                 <p className="text-2xl font-display font-bold text-emerald-400">
-                  {parsed.images.length - imagesMissingAlt.length}
+                  {images.length - imagesMissingAlt.length}
                 </p>
                 <p className="text-xs text-slate-400">With alt text</p>
               </div>
@@ -109,7 +111,7 @@ export function StructurePanel({ result }: StructurePanelProps) {
             </div>
 
             <div className="space-y-1.5 max-h-64 overflow-y-auto">
-              {parsed.images.slice(0, 20).map((img, i) => (
+              {images.slice(0, 20).map((img, i) => (
                 <div key={i} className="flex items-center gap-2 py-1.5 border-b border-ink-800/40 last:border-0">
                   <img
                     src={img.src}
@@ -119,7 +121,7 @@ export function StructurePanel({ result }: StructurePanelProps) {
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-slate-400 truncate font-mono">
-                      {img.src.split("/").pop() || img.src}
+                      {(img.src || "").split("/").pop() || img.src}
                     </p>
                     <p className={`text-xs truncate ${img.hasAlt && img.alt ? "text-emerald-400" : "text-rose-400"}`}>
                       {img.hasAlt && img.alt ? `"${img.alt}"` : "Missing alt text"}

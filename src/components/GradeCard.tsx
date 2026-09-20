@@ -64,9 +64,8 @@ export function GradeCard({ result }: GradeCardProps) {
             <p className="text-xs text-slate-400 font-medium leading-tight mb-1">{entry.category}</p>
             <div className="w-full bg-ink-900/60 rounded-full h-1.5 overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${
-                  entry.status === "good" ? "bg-emerald-400" : entry.status === "warning" ? "bg-amber-400" : "bg-rose-400"
-                }`}
+                className={`h-full rounded-full transition-all ${entry.status === "good" ? "bg-emerald-400" : entry.status === "warning" ? "bg-amber-400" : "bg-rose-400"
+                  }`}
                 style={{ width: `${Math.round((entry.score / entry.maxScore) * 100)}%` }}
               />
             </div>

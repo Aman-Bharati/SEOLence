@@ -1,36 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { ScanSearch, Zap, FileText, TrendingUp, ExternalLink, BarChart3, Download, Eye, Sparkles, ListChecks } from "lucide-react";
+import { ScanSearch, Zap, FileText, BarChart3, TrendingUp, Eye, Sparkles, ListChecks, Calendar, ChevronRight } from "lucide-react";
 import { UrlInput } from "./components/UrlInput";
-import { ScoreGauge } from "./components/ScoreGauge";
-import { StatCards } from "./components/StatCards";
-import { WordFrequencyTable } from "./components/WordFrequencyTable";
-import { PhraseAnalysis } from "./components/PhraseAnalysis";
-import { InsightsPanel } from "./components/InsightsPanel";
-import { MetaDetails } from "./components/MetaDetails";
-import { KeywordRecommendations } from "./components/KeywordRecommendations";
-import { StructurePanel } from "./components/StructurePanel";
-import { ExtractedTextPanel } from "./components/ExtractedTextPanel";
-import { SerpPreview } from "./components/SerpPreview";
-import { MetaGenerator } from "./components/MetaGenerator";
-import { ActionPlan } from "./components/ActionPlan";
-import { GradeCard } from "./components/GradeCard";
-import { MethodologyPanel } from "./components/MethodologyPanel";
-import { VerificationChecklist } from "./components/VerificationChecklist";
-import { ConfidenceIndicator } from "./components/ConfidenceIndicator";
-import { HistorySidebar } from "./components/HistorySidebar";
 import { LoadingState } from "./components/LoadingState";
-import { SpaWarning } from "./components/SpaWarning";
-import { downloadReport } from "./lib/reportGenerator";
-import { analyzePage } from "./lib/analyzer";
-import {
-  generateActionPlan,
-  calculateGradeCard,
-  generateVerificationChecks,
-  calculateConfidence,
-} from "./lib/analyzer";
-import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import type { AnalysisResult, ParsedPage, SeoReport } from "./types";
 import { AuthModal } from "./components/AuthModal";
+import { DashboardLayout } from "./components/DashboardLayout";
+import { ProjectDetailsView } from "./components/ProjectDetailsView";
+import { AuditDetailsReport } from "./components/AuditDetailsReport";
+import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import { computeQualityScores } from "./lib/normalization";
+import type { ParsedPage, WebsiteAudit } from "./types";
 import type { User } from "@supabase/supabase-js";
 
 const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-seo`;
@@ -43,27 +21,74 @@ function getDomain(url: string): string {
   }
 }
 
+
+
 function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [history, setHistory] = useState<SeoReport[]>([]);
-  const [activeReportId, setActiveReportId] = useState<string | null>(null);
-  const [view, setView] = useState<"landing" | "report">("landing");
+  const [selectedAudit, setSelectedAudit] = useState<WebsiteAudit | null>(null);
+  const [isPublicShare, setIsPublicShare] = useState(false);
+  const [historyAudits, setHistoryAudits] = useState<WebsiteAudit[]>([]);
+  const [activeTab, setActiveTab] = useState<"projects" | "history" | "methodology">("projects");
   const [user, setUser] = useState<User | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [crawlProgress, setCrawlProgress] = useState<{
+    status: string;
+    crawled: number;
+    total: number;
+    wordCount: number;
+  } | null>(null);
+
+  // URL Path Hydration for Public Shared Audit Reports (e.g. /share/audit/:id)
+  useEffect(() => {
+    const path = window.location.pathname;
+    const match = path.match(/\/share\/audit\/([a-f0-9-]{36})/i);
+    if (match && match[1]) {
+      const shareId = match[1];
+      setLoading(true);
+      (async () => {
+        try {
+          const { data, error: fetchErr } = await supabase
+            .from("website_audits")
+            .select("*")
+            .eq("id", shareId)
+            .maybeSingle();
+
+          if (data && !fetchErr) {
+            setSelectedAudit(data as WebsiteAudit);
+            setIsPublicShare(true);
+          } else {
+            setError("Shared audit report not found or link has expired.");
+          }
+        } catch (err) {
+          console.error("Failed to load share audit:", err);
+          setError("Failed to load shared audit report.");
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }
+  }, []);
+
+  const handleClearAudit = () => {
+    setSelectedAudit(null);
+    setIsPublicShare(false);
+    if (window.location.pathname.startsWith("/share/audit/")) {
+      window.history.pushState({}, "", "/");
+    }
+  };
 
   const fetchHistory = useCallback(async () => {
     if (!isSupabaseConfigured || !user) return;
     try {
       const { data, error } = await supabase
-        .from("seo_reports")
+        .from("website_audits")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(30);
 
       if (error) throw error;
-      setHistory(data as SeoReport[]);
+      setHistoryAudits(data as WebsiteAudit[]);
     } catch (err) {
       console.error("Failed to fetch history:", err);
     }
@@ -85,97 +110,218 @@ function App() {
     if (user) {
       fetchHistory();
     } else {
-      setHistory([]);
+      setHistoryAudits([]);
     }
   }, [user, fetchHistory]);
 
-  const saveReport = async (analysis: AnalysisResult): Promise<string | null> => {
-    const { parsed } = analysis;
-    const domain = getDomain(parsed.finalUrl);
-
-    const headingsMap: Record<string, string[]> = {};
-    for (let level = 1; level <= 6; level++) {
-      headingsMap[`h${level}`] = parsed.headings
-        .filter((h) => h.level === level)
-        .map((h) => h.text);
-    }
+  const saveAudit = async (
+    url: string,
+    projectId: string | null,
+    scores: ReturnType<typeof computeQualityScores>,
+    parsed: ParsedPage
+  ): Promise<WebsiteAudit | null> => {
+    if (!isSupabaseConfigured || !user) return null;
 
     const rawFrequency: Record<string, number> = {};
-    for (const [word, count] of analysis.wordFrequency) {
+    for (const [word, count] of scores.analysis.wordFrequency) {
       rawFrequency[word] = count;
     }
 
-    const insights = {
-      strengths: analysis.insights.filter((i) => i.type === "strength"),
-      weaknesses: analysis.insights.filter((i) => i.type === "weakness"),
-      recommendations: analysis.insights.filter((i) => i.type === "recommendation"),
-    };
-
-    const metaTags: Record<string, unknown> = {
-      ogTags: parsed.ogTags,
-      twitterTags: parsed.twitterTags,
-      canonical: parsed.canonical,
-      robots: parsed.robots,
-      viewport: parsed.viewport,
-      charset: parsed.charset,
-      lang: parsed.lang,
-      keywords: parsed.metaKeywords,
-    };
-
-    if (!isSupabaseConfigured || !user) return null;
     try {
+      const insertPayload = {
+        project_id: projectId,
+        user_id: user.id,
+        url,
+        overall_score: scores.overall_score,
+        seo_score: scores.seo_score,
+        accessibility_score: scores.accessibility_score,
+        security_score: scores.security_score,
+        content_score: scores.content_score,
+        performance_score: scores.performance_score,
+        audit_data: {
+          parsed,
+          wordFrequency: rawFrequency,
+          topKeywords: scores.analysis.topKeywords,
+          bigrams: scores.analysis.bigrams,
+          trigrams: scores.analysis.trigrams,
+          breakdown: scores.breakdown,
+          securityHeaders: parsed.securityHeaders || {
+            hasCsp: false,
+            hasHsts: false,
+            hasXFrame: false,
+            hasXContentType: false,
+            cspHeader: null,
+            hstsHeader: null,
+            xFrameHeader: null,
+            xContentTypeHeader: null,
+          },
+          accessibilityFlags: parsed.accessibilityFlags || {
+            hasLang: false,
+            langValue: null,
+            hasHeadingSequenceViolation: false,
+            imagesMissingAltCount: 0,
+            totalImagesCount: 0,
+          },
+        },
+        insights: {
+          strengths: scores.analysis.insights.filter((i) => i.type === "strength"),
+          weaknesses: scores.analysis.insights.filter((i) => i.type === "weakness"),
+          recommendations: scores.analysis.insights.filter((i) => i.type === "recommendation"),
+        },
+      };
+
       const { data, error: insertError } = await supabase
-        .from("seo_reports")
-        .insert({
-          user_id: user.id,
-          url: parsed.finalUrl,
-          domain,
-          title: parsed.title,
-          meta_description: parsed.metaDescription,
-          word_count: parsed.wordCount,
-          unique_words: analysis.contentQuality.uniqueWords,
-          readability_score: analysis.readabilityScore,
-          seo_score: analysis.seoScore,
-          top_keywords: analysis.topKeywords,
-          bigrams: analysis.bigrams,
-          trigrams: analysis.trigrams,
-          headings: headingsMap,
-          meta_tags: metaTags,
-          images: parsed.images,
-          links: parsed.links,
-          insights,
-          raw_frequency: rawFrequency,
-        })
-        .select("id")
+        .from("website_audits")
+        .insert(insertPayload)
+        .select()
         .single();
 
       if (insertError) throw insertError;
-      return data.id;
+      return data as WebsiteAudit;
     } catch (err) {
-      console.error("Failed to save report:", err);
+      console.error("Failed to save audit:", err);
       return null;
     }
   };
 
-  const handleAnalyze = async (url: string) => {
+  const handleAnalyze = async (url: string, projectId: string | null = null, siteWide: boolean = false) => {
     setLoading(true);
     setError(null);
-    setResult(null);
-    setView("report");
+    setSelectedAudit(null);
+    setCrawlProgress(null);
 
     try {
+      let jobId = null;
+      if (siteWide && user && isSupabaseConfigured) {
+        const { data, error: jobErr } = await supabase
+          .from("crawl_jobs")
+          .insert({
+            project_id: projectId,
+            user_id: user.id,
+            status: "pending"
+          })
+          .select()
+          .single();
+        if (jobErr) throw jobErr;
+        jobId = data.id;
+        setCrawlProgress({
+          status: "pending",
+          crawled: 0,
+          total: 0,
+          wordCount: 0
+        });
+      }
+
       const response = await fetch(EDGE_FUNCTION_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, siteWide, jobId }),
       });
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}));
         throw new Error(errBody.error || `Request failed (${response.status})`);
+      }
+
+      if (siteWide && jobId && user && isSupabaseConfigured) {
+        let isDone = false;
+        let jobDetails = null;
+        while (!isDone) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const { data, error: pollErr } = await supabase
+            .from("crawl_jobs")
+            .select("*")
+            .eq("id", jobId)
+            .single();
+          if (pollErr) throw pollErr;
+          jobDetails = data;
+          setCrawlProgress({
+            status: data.status,
+            crawled: data.crawled_pages,
+            total: data.total_pages,
+            wordCount: data.total_word_count
+          });
+          if (data.status === "completed" || data.status === "failed") {
+            isDone = true;
+          }
+        }
+
+        if (jobDetails.status === "failed") {
+          throw new Error("Site-wide crawl failed.");
+        }
+
+        const { data: results, error: resultsErr } = await supabase
+          .from("crawl_results")
+          .select("*")
+          .eq("job_id", jobId);
+        if (resultsErr) throw resultsErr;
+
+        const totalWordCount = jobDetails.total_word_count;
+        let perfCount = 0;
+        const avgScores = results.reduce((acc, curr) => {
+          acc.seo += curr.seo_score;
+          if (curr.performance_score !== null) {
+            acc.perf += curr.performance_score;
+            perfCount++;
+          }
+          acc.acc += curr.accessibility_score;
+          acc.sec += curr.security_score;
+          acc.content += curr.content_score;
+          return acc;
+        }, { seo: 0, perf: 0, acc: 0, sec: 0, content: 0 });
+
+        const pageCount = results.length || 1;
+        const finalSeo = Math.round(avgScores.seo / pageCount);
+        const finalPerf = perfCount > 0 ? Math.round(avgScores.perf / perfCount) : null;
+        const finalAcc = Math.round(avgScores.acc / pageCount);
+        const finalSec = Math.round(avgScores.sec / pageCount);
+        const finalContent = Math.round(avgScores.content / pageCount);
+        const finalOverall = Math.round(finalSeo * 0.35 + finalAcc * 0.25 + finalSec * 0.20 + finalContent * 0.20);
+
+        if (!results || results.length === 0) {
+          throw new Error("No crawled pages were returned for this site-wide crawl.");
+        }
+
+        const rootCrawl = results.find(r => r.url === url) || results[0];
+        const parsedBaseline = rootCrawl.audit_data;
+        parsedBaseline.wordCount = totalWordCount;
+        parsedBaseline.url = url;
+
+        // Aggregate visibleText across all crawled pages for site-wide content analysis
+        let combinedText = "";
+        for (const res of results) {
+          const pageParsed = res.audit_data;
+          const pageText = pageParsed?.visibleText || (pageParsed?.paragraphs || []).join(" ") || pageParsed?.bodyText || "";
+          combinedText += " " + pageText;
+        }
+
+        const baseScores = computeQualityScores({
+          ...parsedBaseline,
+          visibleText: combinedText,
+        });
+
+        const scores = {
+          overall_score: finalOverall,
+          seo_score: finalSeo,
+          accessibility_score: finalAcc,
+          security_score: finalSec,
+          content_score: finalContent,
+          performance_score: finalPerf,
+          analysis: baseScores.analysis,
+          breakdown: baseScores.breakdown
+        };
+
+        const saved = await saveAudit(url, projectId, scores, parsedBaseline);
+        if (saved) {
+          setSelectedAudit(saved);
+          await fetchHistory();
+        } else {
+          setSelectedAudit(constructLocalAudit(url, scores, parsedBaseline, projectId));
+        }
+        return;
       }
 
       const parsed = (await response.json()) as ParsedPage;
@@ -188,153 +334,208 @@ function App() {
         throw new Error(`Server returned status ${parsed.statusCode}`);
       }
 
-      const analysis = analyzePage(parsed);
-      setResult(analysis);
+      const scores = computeQualityScores(parsed);
 
-      const reportId = await saveReport(analysis);
-      if (reportId) {
-        setActiveReportId(reportId);
-        await fetchHistory();
+      if (user && isSupabaseConfigured) {
+        const saved = await saveAudit(parsed.finalUrl, projectId, scores, parsed);
+        if (saved) {
+          setSelectedAudit(saved);
+          await fetchHistory();
+        } else {
+          setSelectedAudit(constructLocalAudit(parsed.finalUrl, scores, parsed, projectId));
+        }
+      } else {
+        setSelectedAudit(constructLocalAudit(parsed.finalUrl, scores, parsed, null));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to analyze URL";
+      const message = err instanceof Error ? err.message : "Failed to analyze website";
       setError(message);
-      setView("landing");
     } finally {
       setLoading(false);
+      setCrawlProgress(null);
     }
   };
 
-  const handleSelectHistory = (report: SeoReport) => {
-    // Reconstruct AnalysisResult from saved report
-    const reconstructed: AnalysisResult = {
-      parsed: {
-        url: report.url,
-        finalUrl: report.url,
-        title: report.title,
-        metaDescription: report.meta_description,
-        metaKeywords: (report.meta_tags as Record<string, unknown>)?.keywords as string | null ?? null,
-        canonical: (report.meta_tags as Record<string, unknown>)?.canonical as string | null ?? null,
-        ogTags: (report.meta_tags as Record<string, unknown>)?.ogTags as Record<string, string> ?? {},
-        twitterTags: (report.meta_tags as Record<string, unknown>)?.twitterTags as Record<string, string> ?? {},
-        robots: (report.meta_tags as Record<string, unknown>)?.robots as string | null ?? null,
-        viewport: (report.meta_tags as Record<string, unknown>)?.viewport as string | null ?? null,
-        charset: (report.meta_tags as Record<string, unknown>)?.charset as string | null ?? null,
-        lang: (report.meta_tags as Record<string, unknown>)?.lang as string | null ?? null,
-        headings: [],
-        paragraphs: [],
-        images: report.images,
-        links: report.links,
-        bodyText: "",
-        visibleText: "",
-        wordCount: report.word_count,
-        rawHtmlLength: 0,
-        statusCode: 200,
-        contentType: "text/html",
-        error: null,
-        isClientRendered: false,
-        renderNote: null,
+  const constructLocalAudit = (
+    url: string,
+    scores: ReturnType<typeof computeQualityScores>,
+    parsed: ParsedPage,
+    projectId: string | null
+  ): WebsiteAudit => {
+    const rawFrequency: Record<string, number> = {};
+    for (const [word, count] of scores.analysis.wordFrequency) {
+      rawFrequency[word] = count;
+    }
+
+    return {
+      id: "demo-audit-id",
+      project_id: projectId,
+      user_id: user?.id || null,
+      url,
+      overall_score: scores.overall_score,
+      seo_score: scores.seo_score,
+      accessibility_score: scores.accessibility_score,
+      security_score: scores.security_score,
+      content_score: scores.content_score,
+      performance_score: scores.performance_score,
+      audit_data: {
+        parsed,
+        wordFrequency: rawFrequency,
+        topKeywords: scores.analysis.topKeywords,
+        bigrams: scores.analysis.bigrams,
+        trigrams: scores.analysis.trigrams,
+        securityHeaders: parsed.securityHeaders || {
+          hasCsp: false,
+          hasHsts: false,
+          hasXFrame: false,
+          hasXContentType: false,
+          cspHeader: null,
+          hstsHeader: null,
+          xFrameHeader: null,
+          xContentTypeHeader: null,
+        },
+        accessibilityFlags: parsed.accessibilityFlags || {
+          hasLang: false,
+          langValue: null,
+          hasHeadingSequenceViolation: false,
+          imagesMissingAltCount: 0,
+          totalImagesCount: 0,
+        },
       },
-      wordFrequency: new Map(Object.entries(report.raw_frequency)),
-      topKeywords: report.top_keywords,
-      stopWordCount: 0,
-      bigrams: report.bigrams,
-      trigrams: report.trigrams,
-      readabilityScore: report.readability_score,
-      readabilityLabel: "",
-      seoScore: report.seo_score,
-      keywordDensity: report.top_keywords,
-      overusedWords: report.top_keywords.filter((k) => k.density > 4 && k.count > 5),
-      underusedKeywords: [],
-      recommendedKeywords: [],
-      metaSuggestions: {
-        suggestedTitle: report.title || "",
-        suggestedDescription: report.meta_description || "",
-        titleReason: "",
-        descriptionReason: "",
+      insights: {
+        strengths: (scores.analysis.insights || []).filter((i) => i.type === "strength"),
+        weaknesses: (scores.analysis.insights || []).filter((i) => i.type === "weakness"),
+        recommendations: (scores.analysis.insights || []).filter((i) => i.type === "recommendation"),
       },
-      insights: [
-        ...(report.insights.strengths || []),
-        ...(report.insights.weaknesses || []),
-        ...(report.insights.recommendations || []),
-      ],
-      actionPlan: [],
-      gradeCard: { overallGrade: "", entries: [] },
-      verificationChecks: [],
-      confidence: { score: 100, label: "High", factors: [] },
-      contentQuality: {
-        totalWords: report.word_count,
-        uniqueWords: report.unique_words,
-        lexicalDiversity: report.word_count > 0
-          ? Math.round((report.unique_words / report.word_count) * 1000) / 10
-          : 0,
-        avgWordsPerSentence: 0,
-        sentenceCount: 0,
-        longWords: 0,
-      },
+      created_at: new Date().toISOString(),
     };
-
-    // Rebuild headings from saved structure
-    const headings: { level: number; text: string }[] = [];
-    for (let level = 1; level <= 6; level++) {
-      const key = `h${level}`;
-      const texts = (report.headings as Record<string, string[]>)[key] || [];
-      for (const text of texts) {
-        headings.push({ level, text });
-      }
-    }
-    reconstructed.parsed.headings = headings;
-
-    // Recompute derived fields from reconstructed data
-    reconstructed.actionPlan = generateActionPlan(
-      reconstructed.parsed,
-      reconstructed.insights,
-      reconstructed.topKeywords,
-      reconstructed.overusedWords,
-    );
-    reconstructed.gradeCard = calculateGradeCard(
-      reconstructed.parsed,
-      reconstructed.topKeywords,
-      reconstructed.insights,
-    );
-    reconstructed.verificationChecks = generateVerificationChecks(
-      reconstructed.parsed,
-      reconstructed.readabilityScore,
-    );
-    reconstructed.confidence = calculateConfidence(
-      reconstructed.parsed,
-      reconstructed.verificationChecks,
-    );
-
-    setResult(reconstructed);
-    setActiveReportId(report.id);
-    setError(null);
-    setView("report");
   };
 
-  const handleDelete = async (id: string) => {
-    if (!isSupabaseConfigured || !user) return;
-    try {
-      await supabase.from("seo_reports").delete().eq("id", id);
-      setHistory(history.filter((r) => r.id !== id));
-      if (activeReportId === id) {
-        setActiveReportId(null);
-        setResult(null);
-        setView("landing");
-      }
-    } catch (err) {
-      console.error("Failed to delete report:", err);
-    }
+  // Sign out handler
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setSelectedAudit(null);
+    setActiveTab("projects");
   };
 
+  // Logged-in Dashboard Flow
+  if (user) {
+    return (
+      <DashboardLayout
+        user={user}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onSignOut={handleSignOut}
+      >
+        {loading && (
+          <div className="fixed inset-0 bg-ink-950/80 backdrop-blur-md flex items-center justify-center z-50">
+            <div className="bg-ink-900 border border-ink-700/80 rounded-2xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl glass">
+              <div className="relative w-20 h-20 mx-auto">
+                <div className="absolute inset-0 rounded-full border-4 border-cyan-500/20"></div>
+                <div className="absolute inset-0 rounded-full border-4 border-cyan-400 border-t-transparent animate-spin"></div>
+              </div>
+              <div>
+                <h3 className="text-slate-100 font-display font-semibold text-base">Analyzing Website</h3>
+                <p className="text-xs text-slate-400 mt-1">Executing Core Web Vitals and crawling site links...</p>
+              </div>
+              {crawlProgress && (
+                <div className="space-y-3 pt-2 text-left">
+                  <div className="flex justify-between text-[10px] text-slate-500 font-semibold uppercase">
+                    <span>crawling pages</span>
+                    <span>{crawlProgress.crawled} / {crawlProgress.total || "?"}</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-ink-950 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 rounded-full transition-all duration-300"
+                      style={{ width: `${Math.min(100, (crawlProgress.crawled / (crawlProgress.total || 1)) * 100)}%` }}
+                    ></div>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-400 font-semibold mt-1">
+                    <span>Status: <span className="text-cyan-400">{crawlProgress.status}</span></span>
+                    <span>Words Found: <span className="text-emerald-400">{crawlProgress.wordCount.toLocaleString()}</span></span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!loading && (
+          <>
+            {selectedAudit ? (
+              <AuditDetailsReport
+                audit={selectedAudit}
+                onBack={handleClearAudit}
+                isPublicShare={isPublicShare}
+                onStartOwnAudit={handleClearAudit}
+              />
+            ) : (
+              <>
+                {activeTab === "projects" && (
+                  <ProjectDetailsView
+                    onSelectAudit={(audit) => setSelectedAudit(audit)}
+                    onRunAudit={handleAnalyze}
+                    loading={loading}
+                  />
+                )}
+
+                {activeTab === "history" && (
+                  <div className="bg-ink-850/60 glass border border-ink-700 rounded-2xl p-6">
+                    <h2 className="text-lg font-display font-bold text-slate-50 mb-4">Historical Audit Records</h2>
+                    <div className="space-y-3">
+                      {historyAudits.length === 0 ? (
+                        <p className="text-xs text-slate-500 text-center py-8">
+                          No audit reports saved. Go to Websites to start crawling.
+                        </p>
+                      ) : (
+                        historyAudits.map((audit) => (
+                          <div
+                            key={audit.id}
+                            onClick={() => setSelectedAudit(audit)}
+                            className="flex items-center justify-between p-4 bg-ink-900/30 hover:bg-ink-850/50 border border-ink-800/60 hover:border-cyan-500/20 rounded-xl cursor-pointer transition-all group"
+                          >
+                            <div className="flex items-center gap-4 min-w-0">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-display font-bold text-sm shrink-0 border ${audit.overall_score >= 80
+                                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                                  : audit.overall_score >= 50
+                                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                                    : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                                }`}>
+                                {audit.overall_score}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-slate-200 truncate">{getDomain(audit.url)}</p>
+                                <p className="text-xs text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
+                                  <Calendar className="w-3.5 h-3.5 text-slate-600" />
+                                  {new Date(audit.created_at).toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-cyan-400 transition-colors" />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+        <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      </DashboardLayout>
+    );
+  }
+
+  // Unauthenticated Landing / Demo Flow
   return (
-    <div className="min-h-screen bg-ink-900 text-slate-200 relative overflow-hidden">
+    <div className="min-h-screen bg-ink-900 text-slate-200 relative overflow-hidden flex flex-col justify-between">
       {/* Background effects */}
       <div className="fixed inset-0 grid-bg pointer-events-none" />
       <div className="fixed top-0 left-1/4 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-[120px] pointer-events-none" />
       <div className="fixed bottom-0 right-1/4 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none" />
 
-      <div className="relative z-10">
+      <div className="relative z-10 flex-1">
         {/* Header */}
         <header className="border-b border-ink-800/60 glass sticky top-0 z-20">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
@@ -344,291 +545,110 @@ function App() {
               </div>
               <div>
                 <h1 className="font-display font-bold text-lg text-slate-50 leading-none">
-                  SEO<span className="gradient-text">Lens</span>
+                  Sentinel<span className="gradient-text">QA</span>
                 </h1>
-                <p className="text-xs text-slate-500 mt-0.5">Word Counter & SEO Analyzer</p>
+                <p className="text-xs text-slate-500 mt-0.5">Website Quality Platform</p>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
-              {isSupabaseConfigured ? (
-                <>
-                  <span className="hidden md:flex items-center gap-1.5 text-xs text-slate-500">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-soft" />
-                    Live
-                  </span>
-                  {user ? (
-                    <div className="flex items-center gap-3">
-                      <span className="hidden sm:inline text-xs text-slate-400 max-w-[120px] truncate" title={user.email}>
-                        {user.email}
-                      </span>
-                      <button
-                        onClick={() => supabase.auth.signOut()}
-                        className="text-xs bg-ink-800 hover:bg-rose-500/10 hover:text-rose-400 text-slate-300 px-2.5 py-1.5 rounded-lg border border-ink-700/60 transition-colors"
-                      >
-                        Sign Out
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setIsAuthModalOpen(true)}
-                      className="text-xs bg-gradient-to-r from-cyan-500 to-emerald-500 text-ink-950 font-semibold px-4 py-1.5 rounded-lg transition-all hover:brightness-110 active:scale-95"
-                    >
-                      Sign In
-                    </button>
-                  )}
-                </>
-              ) : (
-                <span className="hidden sm:flex items-center gap-1.5 text-xs text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse-soft" />
-                  Demo Mode (Database Disconnected)
-                </span>
-              )}
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="text-xs bg-gradient-to-r from-cyan-500 to-emerald-500 text-ink-950 font-semibold px-5 py-2 rounded-xl transition-all hover:brightness-110 active:scale-95 shadow-md shadow-cyan-500/10"
+              >
+                Sign In / Register
+              </button>
               <a
                 href="https://developers.google.com/search/docs"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-cyan-400 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-cyan-400 transition-colors"
               >
                 <span className="hidden sm:inline">SEO Docs</span>
-                <ExternalLink className="w-4 h-4" />
+                <span className="text-[10px]">↗</span>
               </a>
             </div>
           </div>
         </header>
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-          {view === "landing" && !loading && (
-            <div className="animate-fade-in-up">
-              {/* Hero */}
-              <div className="text-center max-w-3xl mx-auto mb-10">
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-xs font-medium text-cyan-300 mb-5">
-                  <Zap className="w-3 h-3" />
-                  Crawl any URL · Instant analysis
-                </div>
-                <h2 className="font-display font-bold text-4xl md:text-5xl text-slate-50 leading-tight text-balance mb-4">
-                  Analyze your website's <span className="gradient-text">SEO & word frequency</span> in seconds
-                </h2>
-                <p className="text-base md:text-lg text-slate-400 leading-relaxed max-w-2xl mx-auto">
-                  Enter any URL to extract word counts, keyword density, readability scores,
-                  heading structure, and actionable SEO recommendations — all in one professional report.
-                </p>
-              </div>
+          {loading && <LoadingState />}
 
-              {/* Input */}
-              <div className="max-w-2xl mx-auto mb-12">
-                <UrlInput onAnalyze={handleAnalyze} loading={loading} error={error} />
-              </div>
-
-              {/* Feature highlights */}
-              <div className="grid sm:grid-cols-3 gap-4 max-w-4xl mx-auto mb-10">
-                {[
-                  { icon: <FileText className="w-5 h-5" />, title: "Word Frequency", desc: "Every unique word counted with density metrics and stop word filtering." },
-                  { icon: <BarChart3 className="w-5 h-5" />, title: "SEO Scoring", desc: "Composite score from 25+ checks: meta tags, headings, images, links." },
-                  { icon: <TrendingUp className="w-5 h-5" />, title: "Smart Insights", desc: "Strengths, weaknesses, and keyword recommendations tailored to your niche." },
-                  { icon: <Eye className="w-5 h-5" />, title: "SERP Preview", desc: "Live Google search result preview with editable title and description." },
-                  { icon: <Sparkles className="w-5 h-5" />, title: "AI Meta Generator", desc: "Auto-generates optimized title, description, and OG tags from your content." },
-                  { icon: <ListChecks className="w-5 h-5" />, title: "Action Plan", desc: "Prioritized step-by-step fixes with estimated SEO score impact." },
-                ].map((feature, i) => (
-                  <div
-                    key={i}
-                    className="bg-ink-850/40 glass border border-ink-700 rounded-xl p-5 hover:border-cyan-400/20 transition-all animate-fade-in-up"
-                    style={{ animationDelay: `${i * 100}ms`, opacity: 0 }}
-                  >
-                    <div className="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 mb-3">
-                      {feature.icon}
-                    </div>
-                    <h3 className="font-display font-semibold text-slate-100 mb-1">{feature.title}</h3>
-                    <p className="text-sm text-slate-400 leading-relaxed">{feature.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* History on landing if exists */}
-              {user && history.length > 0 && (
-                <div className="max-w-4xl mx-auto">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-sm font-medium text-slate-400">Recent analyses</span>
-                  </div>
-                  <HistorySidebar
-                    reports={history.slice(0, 5)}
-                    onSelect={handleSelectHistory}
-                    onDelete={handleDelete}
-                    activeId={activeReportId}
+          {!loading && (
+            <>
+              {selectedAudit ? (
+                <div className="animate-fade-in">
+                  <AuditDetailsReport
+                    audit={selectedAudit}
+                    onBack={handleClearAudit}
+                    isPublicShare={isPublicShare}
+                    onStartOwnAudit={handleClearAudit}
                   />
+                </div>
+              ) : (
+                <div className="animate-fade-in-up">
+                  {/* Hero */}
+                  <div className="text-center max-w-3xl mx-auto mb-10">
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-xs font-medium text-cyan-300 mb-5">
+                      <Zap className="w-3 h-3" />
+                      Crawl any URL · Instant accessibility & SEO audits
+                    </div>
+                    <h2 className="font-display font-bold text-4xl md:text-5xl text-slate-50 leading-tight text-balance mb-4">
+                      The intelligent platform to audit <span className="gradient-text">Website Quality</span>
+                    </h2>
+                    <p className="text-base md:text-lg text-slate-400 leading-relaxed max-w-2xl mx-auto">
+                      Run unified audits for SEO tags, response security compliance, HTML accessibility rules,
+                      and content density standards in seconds.
+                    </p>
+                  </div>
+
+                  {/* Input */}
+                  <div className="max-w-2xl mx-auto mb-12">
+                    <UrlInput onAnalyze={(url) => handleAnalyze(url, null)} loading={loading} error={error} />
+                  </div>
+
+                  {/* Feature highlights */}
+                  <div className="grid sm:grid-cols-3 gap-4 max-w-4xl mx-auto mb-10">
+                    {[
+                      { icon: <FileText className="w-5 h-5" />, title: "SEO Quality Engine", desc: "Detailed analysis of meta titles, tags, heading outlines, and canonicals." },
+                      { icon: <BarChart3 className="w-5 h-5" />, title: "Security Headers", desc: "Verifies protection (CSP, HSTS, X-Frame-Options) against vulnerabilities." },
+                      { icon: <TrendingUp className="w-5 h-5" />, title: "Accessibility Compliance", desc: "Validates lang values, alt tag coverage, and heading hierarchy schemas." },
+                      { icon: <Eye className="w-5 h-5" />, title: "Content & Word Counter", desc: "Every unique word and phrase mapped with readability difficulty indexing." },
+                      { icon: <Sparkles className="w-5 h-5" />, title: "Multi-View Dashboard", desc: "Visual trends graph monitoring performance scores across multiple domains." },
+                      { icon: <ListChecks className="w-5 h-5" />, title: "Prioritized Action Plan", desc: "Actionable priority fixes ranked by impact and effort values." },
+                    ].map((feature, i) => (
+                      <div
+                        key={i}
+                        className="bg-ink-850/40 glass border border-ink-700 rounded-xl p-5 hover:border-cyan-400/20 transition-all animate-fade-in-up"
+                        style={{ animationDelay: `${i * 100}ms`, opacity: 0 }}
+                      >
+                        <div className="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 mb-3">
+                          {feature.icon}
+                        </div>
+                        <h3 className="font-display font-semibold text-slate-100 mb-1">{feature.title}</h3>
+                        <p className="text-sm text-slate-400 leading-relaxed">{feature.desc}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {view === "report" && loading && <LoadingState />}
-
-          {view === "report" && result && !loading && (
-            <div className="animate-fade-in space-y-6">
-              {/* Top bar: back + new analysis */}
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => { setView("landing"); setResult(null); setActiveReportId(null); }}
-                    className="text-sm text-slate-400 hover:text-cyan-400 transition-colors flex items-center gap-1.5"
-                  >
-                    <span>← New analysis</span>
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <a
-                    href={result.parsed.finalUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-slate-400 hover:text-cyan-400 transition-colors"
-                  >
-                    <span className="font-mono text-xs">{getDomain(result.parsed.finalUrl)}</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                  <button
-                    onClick={() => downloadReport(result)}
-                    className="flex items-center gap-2 bg-gradient-to-r from-cyan-500/90 to-emerald-500/90 hover:from-cyan-500 hover:to-emerald-500 text-ink-950 font-medium text-xs px-3.5 py-2 rounded-lg transition-all active:scale-95"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download Report
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid lg:grid-cols-[1fr_320px] gap-6">
-                <div className="space-y-6 min-w-0">
-                  {/* Score overview */}
-                  <div className="bg-ink-850/60 glass border border-ink-700 rounded-2xl p-6 flex flex-col md:flex-row items-center gap-8">
-                    <ScoreGauge score={result.seoScore} label="SEO Score" sublabel="Composite rating" size="lg" />
-                    <div className="flex-1 w-full">
-                      <h2 className="font-display font-bold text-xl text-slate-50 mb-1 truncate">
-                        {result.parsed.title || "Untitled Page"}
-                      </h2>
-                      <p className="text-sm text-slate-500 mb-4 font-mono truncate">{result.parsed.finalUrl}</p>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="bg-ink-800/50 rounded-xl p-3 text-center">
-                          <p className="text-2xl font-display font-bold text-slate-100">{result.parsed.wordCount.toLocaleString()}</p>
-                          <p className="text-xs text-slate-500 mt-0.5">Words</p>
-                        </div>
-                        <div className="bg-ink-800/50 rounded-xl p-3 text-center">
-                          <p className="text-2xl font-display font-bold text-slate-100">{result.contentQuality.uniqueWords.toLocaleString()}</p>
-                          <p className="text-xs text-slate-500 mt-0.5">Unique</p>
-                        </div>
-                        <div className="bg-ink-800/50 rounded-xl p-3 text-center">
-                          <p className={`text-2xl font-display font-bold ${result.readabilityScore >= 60 ? "text-emerald-400" : result.readabilityScore >= 40 ? "text-amber-400" : "text-rose-400"}`}>
-                            {result.readabilityScore}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-0.5">Readability</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SPA warning */}
-                  {result.parsed.isClientRendered && result.parsed.renderNote && (
-                    <SpaWarning note={result.parsed.renderNote} />
-                  )}
-
-                  {/* Grade card */}
-                  <GradeCard result={result} />
-
-                  {/* Confidence indicator */}
-                  <ConfidenceIndicator result={result} />
-
-                  {/* Stat cards */}
-                  <StatCards result={result} />
-
-                  {/* SERP Preview */}
-                  <SerpPreview result={result} />
-
-                  {/* Meta tag generator */}
-                  <MetaGenerator result={result} />
-
-                  {/* Meta details */}
-                  <MetaDetails result={result} />
-
-                  {/* Word frequency table */}
-                  <WordFrequencyTable
-                    rawFrequency={result.wordFrequency}
-                    totalWords={result.parsed.wordCount}
-                  />
-
-                  {/* Phrase analysis */}
-                  <PhraseAnalysis bigrams={result.bigrams} trigrams={result.trigrams} />
-
-                  {/* Keyword recommendations */}
-                  <KeywordRecommendations result={result} />
-
-                  {/* Structure */}
-                  <StructurePanel result={result} />
-
-                  {/* Extracted text */}
-                  <ExtractedTextPanel result={result} />
-
-                  {/* Action plan */}
-                  <ActionPlan result={result} />
-
-                  {/* Verification checklist */}
-                  <VerificationChecklist result={result} />
-
-                  {/* Methodology */}
-                  <MethodologyPanel seoScore={result.seoScore} />
-
-                  {/* Insights */}
-                  <div>
-                    <h2 className="font-display font-bold text-xl text-slate-50 mb-4">SEO Insights & Recommendations</h2>
-                    <InsightsPanel insights={result.insights} />
-                  </div>
-                </div>
-
-                {/* History sidebar */}
-                <div>
-                  {user ? (
-                    <HistorySidebar
-                      reports={history}
-                      onSelect={handleSelectHistory}
-                      onDelete={handleDelete}
-                      activeId={activeReportId}
-                    />
-                  ) : isSupabaseConfigured ? (
-                    <div className="bg-ink-850/45 glass border border-ink-700/50 rounded-2xl p-5 text-center shadow-lg">
-                      <h3 className="font-display font-bold text-slate-100 text-sm mb-2">Save Scan History</h3>
-                      <p className="text-xs text-slate-400 leading-relaxed mb-4">
-                        Sign in to automatically save and track your SEO analyses in a personal history dashboard.
-                      </p>
-                      <button
-                        onClick={() => setIsAuthModalOpen(true)}
-                        className="w-full py-2 bg-gradient-to-r from-cyan-500/80 to-emerald-500/80 hover:from-cyan-500 hover:to-emerald-500 text-ink-950 font-semibold text-xs rounded-lg transition-all active:scale-95"
-                      >
-                        Sign In / Sign Up
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="bg-ink-850/20 border border-ink-800 rounded-2xl p-5 text-center">
-                      <p className="text-xs text-slate-500">
-                        Connect your database to enable saving report histories.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            </>
           )}
         </main>
-
-        {/* Footer */}
-        <footer className="border-t border-ink-800/60 mt-12">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <p className="text-xs text-slate-600">
-              SEO Lens — Built with Supabase Edge Functions · Analyzes visible text only
-            </p>
-            <div className="flex items-center gap-4 text-xs text-slate-600">
-              <span>Reports saved to your history</span>
-            </div>
-          </div>
-        </footer>
       </div>
-      
+
+      {/* Footer */}
+      <footer className="border-t border-ink-800/60 relative z-10 bg-ink-950/20 glass">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p className="text-xs text-slate-600">
+            SentinelQA — Continuous Website Quality monitoring. Built with Supabase & React.
+          </p>
+          <div className="flex items-center gap-4 text-xs text-slate-600">
+            <span>Register to save audit history</span>
+          </div>
+        </div>
+      </footer>
+
       {/* Auth Modal Overlay */}
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
     </div>

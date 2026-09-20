@@ -1,18 +1,20 @@
 interface ScoreGaugeProps {
-  score: number;
+  score: number | null;
   label: string;
   sublabel?: string;
   size?: "sm" | "md" | "lg";
 }
 
-function getScoreColor(score: number): { stroke: string; text: string; bg: string } {
+function getScoreColor(score: number | null): { stroke: string; text: string; bg: string } {
+  if (score === null) return { stroke: "#64748b", text: "text-slate-400", bg: "from-slate-500/10 to-slate-500/5" };
   if (score >= 80) return { stroke: "#34d399", text: "text-emerald-400", bg: "from-emerald-500/20 to-emerald-500/5" };
   if (score >= 60) return { stroke: "#fbbf24", text: "text-amber-400", bg: "from-amber-500/20 to-amber-500/5" };
   if (score >= 40) return { stroke: "#fb923c", text: "text-orange-400", bg: "from-orange-500/20 to-orange-500/5" };
   return { stroke: "#fb7185", text: "text-rose-400", bg: "from-rose-500/20 to-rose-500/5" };
 }
 
-function getScoreLabel(score: number): string {
+function getScoreLabel(score: number | null): string {
+  if (score === null) return "Unavailable";
   if (score >= 80) return "Excellent";
   if (score >= 60) return "Good";
   if (score >= 40) return "Needs Work";
@@ -29,7 +31,10 @@ export function ScoreGauge({ score, label, sublabel, size = "md" }: ScoreGaugePr
   const colors = getScoreColor(score);
   const radius = (dims.w - dims.stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (score / 100) * circumference;
+
+  // If score is null, draw empty circle (offset = circumference)
+  const validScore = score !== null ? score : 0;
+  const offset = score !== null ? circumference - (validScore / 100) * circumference : circumference;
 
   return (
     <div className="flex flex-col items-center gap-3">
@@ -59,7 +64,7 @@ export function ScoreGauge({ score, label, sublabel, size = "md" }: ScoreGaugePr
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className={`font-display font-bold ${dims.font} ${colors.text}`}>
-            {Math.round(score)}
+            {score !== null ? Math.round(score) : "N/A"}
           </span>
           <span className="text-xs text-slate-500 font-medium mt-0.5">
             {getScoreLabel(score)}

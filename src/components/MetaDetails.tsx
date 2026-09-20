@@ -45,6 +45,24 @@ export function MetaDetails({ result }: MetaDetailsProps) {
   const ogCount = Object.keys(parsed.ogTags).length;
   const twCount = Object.keys(parsed.twitterTags).length;
 
+  let domainName = "N/A";
+  let protocolName = "N/A";
+  let isHttps = false;
+  if (parsed.finalUrl) {
+    try {
+      const parsedUrl = new URL(parsed.finalUrl);
+      domainName = parsedUrl.hostname;
+      protocolName = parsedUrl.protocol.replace(":", "").toUpperCase();
+      isHttps = parsed.finalUrl.startsWith("https");
+    } catch {
+      domainName = parsed.finalUrl;
+    }
+  }
+
+  const contentTypeClean = parsed.contentType 
+    ? String(parsed.contentType).split(";")[0] 
+    : "N/A";
+
   return (
     <div className="grid md:grid-cols-2 gap-4">
       {/* Meta Tags */}
@@ -104,7 +122,7 @@ export function MetaDetails({ result }: MetaDetailsProps) {
               {Object.entries(parsed.ogTags).slice(0, 5).map(([key, val]) => (
                 <div key={key} className="flex items-center gap-2 text-xs">
                   <span className="font-mono text-cyan-400 flex-shrink-0">{key}</span>
-                  <span className="text-slate-500 truncate">{val.slice(0, 50)}</span>
+                  <span className="text-slate-500 truncate">{String(val || "").slice(0, 50)}</span>
                 </div>
               ))}
             </div>
@@ -117,11 +135,11 @@ export function MetaDetails({ result }: MetaDetailsProps) {
             <h3 className="font-display font-semibold text-slate-100">Page Details</h3>
           </div>
           <div className="space-y-0">
-            <StatusRow label="HTTP Status" value={String(parsed.statusCode)} status={parsed.statusCode >= 200 && parsed.statusCode < 300 ? "ok" : "warn"} />
-            <StatusRow label="Content Type" value={parsed.contentType.split(";")[0]} status="info" />
-            <StatusRow label="HTML Size" value={`${(parsed.rawHtmlLength / 1024).toFixed(1)} KB`} status="info" />
-            <StatusRow label="Domain" value={new URL(parsed.finalUrl).hostname} status="info" />
-            <StatusRow label="Protocol" value={new URL(parsed.finalUrl).protocol.replace(":", "").toUpperCase()} status={parsed.finalUrl.startsWith("https") ? "ok" : "warn"} />
+            <StatusRow label="HTTP Status" value={parsed.statusCode ? String(parsed.statusCode) : "N/A"} status={parsed.statusCode && parsed.statusCode >= 200 && parsed.statusCode < 300 ? "ok" : "warn"} />
+            <StatusRow label="Content Type" value={contentTypeClean} status="info" />
+            <StatusRow label="HTML Size" value={`${((parsed.rawHtmlLength || 0) / 1024).toFixed(1)} KB`} status="info" />
+            <StatusRow label="Domain" value={domainName} status="info" />
+            <StatusRow label="Protocol" value={protocolName} status={isHttps ? "ok" : "warn"} />
           </div>
         </div>
       </div>
