@@ -1,25 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { ScanSearch, Zap, FileText, BarChart3, TrendingUp, Eye, Sparkles, ListChecks, Calendar, ChevronRight } from "lucide-react";
+import { ScanSearch, Zap, FileText, BarChart3, TrendingUp, Eye, Sparkles, ListChecks } from "lucide-react";
 import { UrlInput } from "./components/UrlInput";
 import { LoadingState } from "./components/LoadingState";
 import { AuthModal } from "./components/AuthModal";
 import { DashboardLayout } from "./components/DashboardLayout";
 import { ProjectDetailsView } from "./components/ProjectDetailsView";
 import { AuditDetailsReport } from "./components/AuditDetailsReport";
+import { HistoricalAuditList } from "./components/HistoricalAuditList";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import { computeQualityScores } from "./lib/normalization";
 import type { ParsedPage, WebsiteAudit } from "./types";
 import type { User } from "@supabase/supabase-js";
 
 const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-seo`;
-
-function getDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
 
 
 
@@ -94,9 +87,36 @@ function App() {
     }
   }, [user]);
 
+  const handleDeleteHistoryAudits = async (auditIds: string[]) => {
+    try {
+      if (isSupabaseConfigured && user) {
+        const { error: err } = await supabase
+          .from("website_audits")
+          .delete()
+          .in("id", auditIds);
+        if (err) throw err;
+      }
+      setHistoryAudits((prev) => prev.filter((a) => !auditIds.includes(a.id)));
+      if (selectedAudit && auditIds.includes(selectedAudit.id)) {
+        setSelectedAudit(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete history audits:", err);
+      throw err;
+    }
+  };
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error && (error.message?.includes("Refresh Token") || error.message?.includes("invalid_grant"))) {
+        console.warn("[Auth] Stale refresh token encountered. Clearing session state.");
+        supabase.auth.signOut().catch(() => { });
+        setUser(null);
+      } else {
+        setUser(session?.user ?? null);
+      }
+    }).catch(() => {
+      setUser(null);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -229,6 +249,10 @@ function App() {
       if (siteWide && jobId && user && isSupabaseConfigured) {
         let isDone = false;
         let jobDetails = null;
+        let errorCount = 0;
+        let lastCrawledPages = -1;
+        let lastProgressTimestamp = Date.now();
+
         while (!isDone) {
           await new Promise(resolve => setTimeout(resolve, 3000));
           const { data, error: pollErr } = await supabase
@@ -236,14 +260,45 @@ function App() {
             .select("*")
             .eq("id", jobId)
             .single();
-          if (pollErr) throw pollErr;
+
+          if (pollErr) {
+            console.warn("[Crawl Poll Warning]", pollErr);
+            errorCount++;
+            if (errorCount > 5) throw pollErr;
+            continue;
+          }
+
+          errorCount = 0;
           jobDetails = data;
+
+          // Auto-resume check: If crawl status is "crawling" but progress paused for >45s, re-trigger continuation from browser!
+          if (data.crawled_pages !== lastCrawledPages) {
+            lastCrawledPages = data.crawled_pages;
+            lastProgressTimestamp = Date.now();
+          } else if (data.status === "crawling" && Date.now() - lastProgressTimestamp > 45000) {
+            console.log(`[Crawl Auto-Resume] Progress paused at ${data.crawled_pages}/${data.total_pages}. Triggering continuation chunk from browser...`);
+            lastProgressTimestamp = Date.now();
+            fetch(EDGE_FUNCTION_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+              },
+              body: JSON.stringify({ url, siteWide: true, jobId }),
+            }).catch(err => console.warn("[Crawl Resume Warning]", err));
+          }
+
+          const isCompleted = data.status === "completed";
+          const displayCrawled = isCompleted ? Math.max(data.crawled_pages, data.total_pages) : data.crawled_pages;
+          const displayTotal = isCompleted ? displayCrawled : data.total_pages;
+
           setCrawlProgress({
             status: data.status,
-            crawled: data.crawled_pages,
-            total: data.total_pages,
+            crawled: displayCrawled,
+            total: displayTotal,
             wordCount: data.total_word_count
           });
+
           if (data.status === "completed" || data.status === "failed") {
             isDone = true;
           }
@@ -480,43 +535,13 @@ function App() {
                 )}
 
                 {activeTab === "history" && (
-                  <div className="bg-ink-850/60 glass border border-ink-700 rounded-2xl p-6">
-                    <h2 className="text-lg font-display font-bold text-slate-50 mb-4">Historical Audit Records</h2>
-                    <div className="space-y-3">
-                      {historyAudits.length === 0 ? (
-                        <p className="text-xs text-slate-500 text-center py-8">
-                          No audit reports saved. Go to Websites to start crawling.
-                        </p>
-                      ) : (
-                        historyAudits.map((audit) => (
-                          <div
-                            key={audit.id}
-                            onClick={() => setSelectedAudit(audit)}
-                            className="flex items-center justify-between p-4 bg-ink-900/30 hover:bg-ink-850/50 border border-ink-800/60 hover:border-cyan-500/20 rounded-xl cursor-pointer transition-all group"
-                          >
-                            <div className="flex items-center gap-4 min-w-0">
-                              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-display font-bold text-sm shrink-0 border ${audit.overall_score >= 80
-                                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                                  : audit.overall_score >= 50
-                                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                                    : "bg-rose-500/10 border-rose-500/30 text-rose-400"
-                                }`}>
-                                {audit.overall_score}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-semibold text-slate-200 truncate">{getDomain(audit.url)}</p>
-                                <p className="text-xs text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
-                                  <Calendar className="w-3.5 h-3.5 text-slate-600" />
-                                  {new Date(audit.created_at).toLocaleString()}
-                                </p>
-                              </div>
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-cyan-400 transition-colors" />
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                  <HistoricalAuditList
+                    audits={historyAudits}
+                    onSelectAudit={(audit) => setSelectedAudit(audit)}
+                    onDeleteAudits={handleDeleteHistoryAudits}
+                    showDomain={true}
+                    emptyMessage="No audit reports saved. Go to My Websites to start crawling."
+                  />
                 )}
               </>
             )}

@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { Plus, Globe, Play, Trash2, Calendar, ChevronRight, Loader2, Clock, Lock } from "lucide-react";
+import { Plus, Globe, Play, Trash2, Loader2, Clock, Lock } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import type { Project, WebsiteAudit } from "../types";
 import { ScoreTrendChart } from "./ScoreTrendChart";
 import { CompetitorPanel } from "./CompetitorPanel";
 import { HistoryRegressionPanel } from "./HistoryRegressionPanel";
 import { KeywordIntelligence } from "./KeywordIntelligence";
+import { HistoricalAuditList } from "./HistoricalAuditList";
 import { getTierLimits } from "../lib/subscription";
 import { UpgradeModal } from "./UpgradeModal";
 
@@ -131,6 +132,22 @@ export function ProjectDetailsView({
       setAudits(data || []);
     } catch (err) {
       console.error("Failed to fetch audits:", err);
+    }
+  };
+
+  const handleDeleteAudits = async (auditIds: string[]) => {
+    try {
+      if (isSupabaseConfigured) {
+        const { error: err } = await supabase
+          .from("website_audits")
+          .delete()
+          .in("id", auditIds);
+        if (err) throw err;
+      }
+      setAudits((prev) => prev.filter((a) => !auditIds.includes(a.id)));
+    } catch (err) {
+      console.error("Failed to delete audit records:", err);
+      throw err;
     }
   };
 
@@ -408,49 +425,12 @@ export function ProjectDetailsView({
                   )}
 
                   {/* Audits List */}
-                  <div className="bg-ink-850/60 glass border border-ink-700 rounded-2xl p-6">
-                    <h3 className="font-display font-semibold text-slate-100 mb-4">Historical Audit Records</h3>
-                    <div className="space-y-3">
-                      {audits.length === 0 ? (
-                        <div className="text-center py-10 text-slate-500 text-xs">
-                          No audits performed yet. Click "Run Audit" above to launch the first check.
-                        </div>
-                      ) : (
-                        audits.map((audit) => (
-                          <div
-                            key={audit.id}
-                            onClick={() => onSelectAudit(audit)}
-                            className="flex items-center justify-between p-4 bg-ink-900/30 hover:bg-ink-850/50 border border-ink-800/60 hover:border-cyan-500/20 rounded-xl cursor-pointer transition-all group"
-                          >
-                            <div className="flex items-center gap-4 min-w-0">
-                              {/* Score Circle */}
-                              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-display font-bold text-sm shrink-0 border ${audit.overall_score >= 80
-                                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                                  : audit.overall_score >= 50
-                                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                                    : "bg-rose-500/10 border-rose-500/30 text-rose-400"
-                                }`}>
-                                {audit.overall_score}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="text-xs text-slate-400 font-mono flex items-center gap-1.5">
-                                  <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                                  {new Date(audit.created_at).toLocaleString()}
-                                </p>
-                                <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500 flex-wrap">
-                                  <span>SEO: <strong className="text-slate-300">{audit.seo_score}</strong></span>
-                                  <span>Accessibility: <strong className="text-slate-300">{audit.accessibility_score}</strong></span>
-                                  <span>Security: <strong className="text-slate-300">{audit.security_score}</strong></span>
-                                  <span>Content: <strong className="text-slate-300">{audit.content_score}</strong></span>
-                                </div>
-                              </div>
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-cyan-400 transition-colors" />
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                  <HistoricalAuditList
+                    audits={audits}
+                    onSelectAudit={onSelectAudit}
+                    onDeleteAudits={handleDeleteAudits}
+                    emptyMessage='No audits performed yet. Click "Run Audit" above to launch the first check.'
+                  />
                 </>
               ) : activeTab === "competitors" ? (
                 <CompetitorPanel projectId={activeProject.id} latestAudit={audits[0] || null} />
